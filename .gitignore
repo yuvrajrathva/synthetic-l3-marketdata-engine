@@ -39,3 +39,17 @@
 
 # debug information files
 *.dwo
+
+# Build artifacts
+build/
+build-*/
+cmake-build-*/
+
+# CMake generated
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Config
+deribit_config.json
