@@ -74,10 +74,10 @@ ConfigLoader::DeribitConfig load_config(const std::string& config_path)
             config.max_reconnect_attempts = heartbeat.error() ? 5 : heartbeat.value();
         }
 
-        auto subs_obj = deribit.value()["substriptions"].get_object();
+        auto subs_obj = deribit.value()["subscriptions"].get_object();
         if(!subs_obj.error())
         {
-            auto instruments = subs_obj.value()["instrumets"].get_array();
+            auto instruments = subs_obj.value()["instruments"].get_array();
             if(!instruments.error())
             {
                 for(auto inst : instruments.value())
@@ -102,9 +102,6 @@ ConfigLoader::DeribitConfig load_config(const std::string& config_path)
     {
         std::cerr << "[CONFIG ERROR]" << simdjson::error_message(e.error()) << '\n';
     }
-    
-    if(config.instruments.empty()) config.instruments = {"BTC-PERPETUAL"};
-    if(config.channels.empty()) config.channels = {"book.{instrument}.raw"};
 
     std::cout << "[CONFIG] Loaded" << std::endl;
     return config;
