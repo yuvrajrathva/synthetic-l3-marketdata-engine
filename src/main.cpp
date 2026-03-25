@@ -43,6 +43,7 @@ int main()
     }
 
     client.stop();
+    md_handler.print_stats();
     std::cout << "Shutdown complete" << std::endl;
 
     return 0;

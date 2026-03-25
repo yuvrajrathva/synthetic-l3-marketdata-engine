@@ -1,5 +1,7 @@
 #include "utils/market_data_handler.hpp"
 #include "external_utils/simdjson.h"
+#include "types.hpp"
+
 #include <cstdio>
 #include <iostream>
 
@@ -9,7 +11,28 @@ struct MarketDataHandler::Impl {
 
 MarketDataHandler::MarketDataHandler()
     : pimpl_(std::make_unique<Impl>())
-    , error_cb_(nullptr){}
+    , error_cb_(nullptr)
+{
+    correlator_.set_event_callback([this](const L3Event& ev) {
+        tracker_.on_event(ev);
+
+        const char* type_str =
+            ev.type == L3EventType::OrderAdd    ? "Add   " :
+            ev.type == L3EventType::OrderCancel ? "Cancel" : "Fill  ";
+
+        const char* side_str = ev.side == Side::Bid ? "bid" : "ask";
+
+        std::cout << "[L3] " << type_str
+                  << " | " << side_str
+                  << " | id="    << ev.order_id
+                  << " | price=" << (ev.price / 10.0)
+                  << " | qty="   << ev.qty
+                  << " | ts="    << ev.exchange_ts
+                  << (ev.trade_id ? " | trade_id=" : "")
+                  << (ev.trade_id ? std::to_string(ev.trade_id) : "")
+                  << "\n";
+    });
+}
 
 MarketDataHandler::~MarketDataHandler() = default;
 
@@ -22,6 +45,7 @@ void MarketDataHandler::on_message(std::string_view raw_msg) noexcept
 {
     try
     {
+        const uint64_t recv_ts = get_timestamp_ns();
         simdjson::padded_string padded(raw_msg);
         auto doc = pimpl_->parser.iterate(padded);
 
@@ -52,85 +76,71 @@ void MarketDataHandler::on_message(std::string_view raw_msg) noexcept
                     continue;
                 }
 
-                int64_t timestamp = ts_res.value();
-                double price = price_res.value();
-                std::string_view direction = dir_res.value();
-                double amount = qty_res.value();
+                Price price     = to_price(price_res.value());
+                Qty   qty       = static_cast<Qty>(qty_res.value());
+                Side  agg_side  = (dir_res.value() == "buy") ? Side::Ask : Side::Bid;
+                Timestamp ts    = static_cast<Timestamp>(ts_res.value());
 
-                std::cout 
-                    << "[TRADE] "
-                    << direction << " | "
-                    << "Price: " << price << " | "
-                    << "Qty: " << amount << " | "
-                    << "Ts: " << timestamp
-                    << "\n";
+                std::string_view trade_id_sv;
+                uint64_t trade_id = 0;
+                if (obj["trade_id"].get_string().get(trade_id_sv) == simdjson::SUCCESS)
+                    trade_id = std::stoull(std::string(trade_id_sv));
+
+                correlator_.on_trade(ts, price, qty,
+                                    agg_side, trade_id);
+
+                // std::cout 
+                //     << "[TRADE] "
+                //     << direction << " | "
+                //     << "Price: " << price << " | "
+                //     << "Qty: " << amount << " | "
+                //     << "Ts: " << timestamp
+                //     << "\n";
             }
         }
         else if (auto data = data_field.get_object(); !data.error())
         {
             auto ts_res = data.value()["timestamp"].get_int64();
             if (ts_res.error()) return;
-            int64_t timestamp = ts_res.value();
+            Timestamp ts    = static_cast<Timestamp>(ts_res.value());
 
-            // Process bids
-            auto bids_result = data.value()["bids"].get_array();
-            if (!bids_result.error()) {
-                for (auto level_elem : bids_result.value()) {
-                    auto level_array = level_elem.get_array();
-                    if (level_array.error()) continue;
-                    
-                    auto iter = level_array.value().begin();
+            auto process_levels = [&](simdjson::ondemand::array& arr, Side side)
+            {
+                for (auto elem : arr)
+                {
+                    auto level = elem.get_array();
+                    if (level.error()) continue;
 
-                    std::string_view action;
-                    if ((*iter).get_string().get(action) != simdjson::SUCCESS) continue;
+                    auto it = level.value().begin();
 
-                    ++iter;
-                    double price_double;
-                    if ((*iter).get_double().get(price_double) != simdjson::SUCCESS) continue;
-                    
-                    ++iter;
-                    double qty_double;
-                    if ((*iter).get_double().get(qty_double) != simdjson::SUCCESS) continue;
+                    std::string_view action_sv;
+                    if ((*it).get_string().get(action_sv) != simdjson::SUCCESS) continue;
+                    ++it;
 
-                    std::cout 
-                    << "[BID] "
-                    << action << " | "
-                    << "Price: " << price_double << " | "
-                    << "Qty: " << qty_double << " | "
-                    << "Ts: " << timestamp
-                    << "\n";
+                    double price_d;
+                    if ((*it).get_double().get(price_d) != simdjson::SUCCESS) continue;
+                    ++it;
+
+                    double qty_d;
+                    if ((*it).get_double().get(qty_d) != simdjson::SUCCESS) continue;
+
+                    L2Action action;
+                    if      (action_sv == "new")    action = L2Action::New;
+                    else if (action_sv == "change") action = L2Action::Change;
+                    else                            action = L2Action::Delete;
+
+                    Price price   = to_price(price_d);
+                    Qty   new_qty = static_cast<Qty>(qty_d);
+
+                    correlator_.on_l2_update(ts, action, price, new_qty, side, recv_ts);
                 }
-            }
-            
-            // Process asks
-            auto asks_result = data.value()["asks"].get_array();
-            if (!asks_result.error()) {
-                for (auto level_elem : asks_result.value()) {
-                    auto level_array = level_elem.get_array();
-                    if (level_array.error()) continue;
-                    
-                    auto iter = level_array.value().begin();
-                    
-                    std::string action;
-                    if ((*iter).get_string().get(action) != simdjson::SUCCESS) continue;
-                    
-                    ++iter;
-                    double price_double;
-                    if ((*iter).get_double().get(price_double) != simdjson::SUCCESS) continue;
-                    
-                    ++iter;
-                    double qty_double;
-                    if ((*iter).get_double().get(qty_double) != simdjson::SUCCESS) continue;
+            };
 
-                    std::cout 
-                    << "[ASK] "
-                    << action << " | "
-                    << "Price: " << price_double << " | "
-                    << "Qty: " << qty_double << " | "
-                    << "Ts: " << timestamp
-                    << "\n";
-                }
-            }
+            auto bids = data.value()["bids"].get_array();
+            if (!bids.error()) process_levels(bids.value(), Side::Bid);
+
+            auto asks = data.value()["asks"].get_array();
+            if (!asks.error()) process_levels(asks.value(), Side::Ask);
         }
         else
         {

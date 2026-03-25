@@ -15,6 +15,10 @@ add_executable(marketdata-engine
     src/utils/deribit_client.cpp
     src/utils/websocket_client.cpp
     src/utils/market_data_handler.cpp
+    src/utils/shadow_book.cpp
+    src/utils/l3_order_tracker.cpp
+    src/utils/trade_buffer.cpp
+    src/utils/correlator.cpp
 )
 
 target_include_directories(marketdata-engine PRIVATE include)

@@ -1,12 +1,48 @@
 #pragma once
 
-#include "types.hpp"
-
 #include <map>
 #include <iostream>
+#include <deque>
 
-using Price = uint32_t;
+using Price = uint64_t; // will do price * 10 to handle 0.5 increments
 using Qty = uint32_t;
+using OrderId = uint64_t;
+using Timestamp = uint64_t;
+
+constexpr Price   INVALID_PRICE    = -1;
+constexpr OrderId INVALID_ORDER_ID = 0;
+
+enum class Side : uint8_t 
+{
+    Bid = 0,
+    Ask = 1
+};
+
+enum class L2Action : uint8_t
+{
+    New = 0,
+    Change = 1,
+    Delete = 2,
+};
+
+enum class L3EventType : uint8_t
+{
+    OrderAdd = 0,
+    OrderCancel = 1,
+    OrderFill = 2
+};
+
+struct L3Event
+{
+    L3EventType type;
+    Side side;
+    OrderId order_id;
+    Price price;
+    Qty qty;
+    Timestamp exchange_ts;
+    uint64_t recv_ts_ns;
+    uint64_t trade_id;
+};
 
 struct L2Book
 {
@@ -19,12 +55,6 @@ struct L2Book
     bool is_synced = false;
 };
 
-enum class L2Action : uint8_t
-{
-    New = 0,
-    Change = 1,
-    Delete = 2,
-};
 
 struct PriceLevelUpdate
 {
